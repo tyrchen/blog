@@ -9,11 +9,13 @@ const React = require('react');
 const nconf = require('nconf');
 const oauth = require('oauth');
 const handlebars = require('handlebars');
-
+const transitImmutable = require('transit-immutable-js');
+const { Provider } = require('react-redux');
 const t = require('transducers.js');
 const { range, seq, compose, map, filter } = t;
 const { go, chan, take, put, timeout, operations: ops } = require('js-csp');
-const { encodeTextContent, Element, Elements } = require('../src/lib/util');
+
+const { encodeTextContent } = require('../src/lib/util');
 const api = require('./impl/api');
 const feed = require('./feed');
 const statics = require('./impl/statics');
@@ -47,7 +49,7 @@ function requireAdmin(req, res, next) {
     next();
   }
   else {
-    res.status(401).render('bad auth, man');
+    res.status(401).send('must be authorized user for this action');
   }
 }
 
@@ -186,7 +188,7 @@ app.get('/api/*', function(req, res) {
 
 app.get('/atom.xml', function(req, res) {
   go(function*() {
-    let posts = yield api.getPosts(5);
+    let posts = yield api.queryPosts({ limit: 5 });
     res.set('Content-Type', 'application/atom+xml');
     res.send(feed.render(posts));
   });
@@ -201,56 +203,65 @@ if(!process.env.NO_SERVER_RENDERING) {
 }
 
 app.get('*', function (req, res, next) {
-  let disableServerRendering = (
-    process.env.NO_SERVER_RENDERING || req.cookies.renderOnServer === 'n'
-  );
+  const disableServerRendering = process.env.NO_SERVER_RENDERING;
 
   go(function*() {
-    let payload = {
-      user: { name: req.session.username,
-              admin: isAdmin(req.session.username) },
-      config: {
-        url: nconf.get('url')
-      }
+    const user = {
+      name: req.session.username,
+      admin: isAdmin(req.session.username)
     };
-    let title = 'James Long';
-    let bodyClass = '';
-    let content = 'Loading...';
 
-    if(!disableServerRendering) {
-      let { router, pageChan } = bootstrap.run(
-        routes,
-        req.path,
-        { user: payload.user }
+    function send(initialState, markup) {
+      const payload = encodeTextContent(
+        transitImmutable.toJSON({
+          state: initialState,
+          user: user
+        })
       );
-      let { Handler, props } = yield take(pageChan);
-      payload.data = props.data;
 
-      if(process.env.NODE_ENV !== 'production' && props.error) {
-        res.send(props.error.stack);
-        throw props.error;
-      }
+      const output = appTemplate({
+        content: markup,
+        payload: payload,
+        bodyClass: initialState ? initialState.route.bodyClass : '',
+        title: initialState ? initialState.route.title : '',
+        webpackURL: nconf.get('webpackURL')
+      });
 
-      if(props.title) {
-        title = typeof props.title === 'function' ?
-          props.title(props.data) :
-          props.title;
-      }
-      if(props.bodyClass) {
-        bodyClass = props.bodyClass;
-      }
-      content = React.renderToString(React.createElement(Handler, props))
+      res.send(output);
     }
 
-    let result = appTemplate({
-      content: content,
-      payload: encodeTextContent(JSON.stringify(payload)),
-      bodyClass: bodyClass,
-      title: title,
-      webpackURL: nconf.get('webpackURL')
-    });
+    if(!disableServerRendering) {
+      const { router, routeChan, store } = bootstrap.run(routes, {
+        location: req.path,
+        user: user,
+        prefetchData: true
+      });
 
-    res.send(result);
+      // Wait for all data to be loaded for the page
+      const routeState = yield take(routeChan);
+
+      // TODO(jwl): show this error
+      // if(process.env.NODE_ENV !== 'production' && props.error) {
+      //   res.send(props.error.stack);
+      //   throw props.error;
+      // }
+
+      const initialState = store.getState();
+      const prerenderedMarkup = React.renderToString(
+        React.createElement(
+          Provider,
+          { store: store },
+          () => React.createElement(routeState.handler,
+                                    { route: routeState,
+                                      queryParams: routeState.params })
+        )
+      );
+
+      send(initialState, prerenderedMarkup);
+    }
+    else {
+      send(null, '');
+    }
   });
 });
 

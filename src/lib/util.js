@@ -23,8 +23,25 @@ function decodeTextContent(str) {
   })
 }
 
+function prevented(cb) {
+  return function(e) {
+    e.preventDefault();
+    return cb.apply(null, arguments);
+  }
+}
+
 function slugify(name) {
   return name.replace(/[ \n!@#$%^&*():"'|?=]/g, '-');
+}
+
+function mergeObj(...args) {
+  const obj = {};
+  args.forEach(arg => {
+    Object.keys(arg).forEach(k => {
+      obj[k] = arg[k];
+    });
+  });
+  return obj;
 }
 
 // channel utils
@@ -90,23 +107,7 @@ function blockFor(name, children) {
   return block;
 }
 
-function Element(el) {
-  return React.createFactory(el);
-}
-
-function Elements(obj) {
-  var res = {};
-  for(var k in obj) {
-    var el = obj[k];
-    // TODO: Argh, I need to figure out a better way to interact with
-    // factories
-    if((typeof el === "function" && el.isReactLegacyFactory) ||
-       (el.prototype && el.prototype.render)) {
-      res[k] = React.createFactory(obj[k]);
-    }
-  }
-  return res;
-}
+// now later a store can check `action instanceof AsyncStatus`?
 
 // Assertions
 
@@ -119,13 +120,13 @@ function assert(msg, val) {
 module.exports = {
   encodeTextContent,
   decodeTextContent,
+  prevented,
   slugify,
+  mergeObj,
   invokeCallback,
   invokeCallbackM,
   takeArray,
   takeAll,
   blockFor,
-  Element,
-  Elements,
   invariant
 };

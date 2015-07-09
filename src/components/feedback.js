@@ -1,81 +1,61 @@
 const t = require("transducers.js");
 const React = require("react");
-const dom = React.DOM;
 const csp = require("js-csp");
 const { go, chan, take, put, ops } = csp;
-const { Element, Elements } = require("../lib/util");
-const { Link } = Elements(require("react-router"));
 const api = require('impl/api');
 const nprogress = require('nprogress');
+const { connect } = require("../lib/redux");
+const actions = require('../actions/editor');
 
-let pending = 0;
-function onXHR(comp, ch) {
-  return go(function*() {
-    pending++;
-    nprogress.start();
-    let val;
-
-    try {
-      val = yield take(ch);
-    }
-    catch(e) {
-      comp.addError(e.message);
-      val = csp.Throw(e);
-    }
-
-    pending--;
-    if(!pending) {
-      nprogress.done();
-    }
-
-    return val;
-  });
-}
+const dom = React.DOM;
 
 let Feedback = React.createClass({
   displayName: "Feedback",
 
-  getInitialState: function() {
-    return { errors: [] };
-  },
+  componentWillReceiveProps: function(nextProps) {
+    // TODO(jwl): debounce this so that if multiple requests happen
+    // sequentially it doesn't reset the progress bar?
+    if(this.props.numRequests === 0 && nextProps.numRequests > 0) {
+      nprogress.start();
+    }
+    else if(nextProps.numRequests === 0) {
+      nprogress.done();
+    }
 
-  componentDidMount: function() {
-    this.xhrHandler = onXHR.bind(null, this);
-    api.addHandler(this.xhrHandler);
-    this.timers = [];
-  },
-
-  componentWillUnmount: function() {
-    api.removeHandler(this.xhrHandler);
-
-    this.timers.forEach(timer => {
-      clearTimeout(timer);
-    });
-  },
-
-  addError: function(error) {
-    let errors = this.state.errors;
-    errors.push(error);
-    this.setState({ errors: errors });
-
-    let timer = setTimeout(() => {
-      errors.shift();
-      this.timers.shift();
-      this.setState({ errors: errors });
-    }, 5000);
-    this.timers.push(timer);
+    if(nextProps.errors.count()) {
+      // TODO(jwl): Really not sure about this one. We want to remove
+      // the errors after they are shown for an amount of time. Probably
+      // need to move this somewhere else.
+      const currentErrors = nextProps.errors;
+      setTimeout(() => {
+        this.props.actions.removeErrors(currentErrors);
+      }, 4000);
+    }
   },
 
   render: function() {
-    let errors = this.state.errors;
-    return dom.div(
-      { className: errors.length ? 'feedback' : '' },
-      errors.map(err => {
-        return dom.div({ className: 'error',
-                         dangerouslySetInnerHTML: { __html: err }});
-      })
-    );
+    if(this.props.errors.count()) {
+      return dom.div(
+        { className: 'notifications' },
+        this.props.errors.map((err, i) => {
+          return dom.div({ key: i,
+                           className: 'notification error'},
+                         err.message.toString());
+        })
+      );
+    }
+
+    return null;
   }
 });
 
-module.exports = Feedback;
+module.exports = connect(Feedback, {
+  actions: actions,
+
+  select: function(state) {
+    return {
+      numRequests: state.asyncRequests.get('openRequests').count(),
+      errors: state.asyncRequests.get('errors')
+    };
+  }
+});

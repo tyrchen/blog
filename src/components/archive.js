@@ -1,29 +1,27 @@
 const React = require('react');
-const { Element, Elements } = require('../lib/util');
 const csp = require('js-csp');
 const { displayDate } = require("../lib/date");
 const { go, chan, take, put, ops } = csp;
-const { Link } = Elements(require("react-router"));
-const Main = Element(require('./main'));
-const Header = Element(require("./header"));
-const Page = Element(require('./page'));
+const Immutable = require('immutable');
+const actions = require("../actions/blog");
+const { connect } = require("../lib/redux");
+
+const Link = React.createFactory(require("react-router").Link);
+const Main = React.createFactory(require('./main'));
+const Header = React.createFactory(require("./header"));
+const Page = React.createFactory(require('./page'));
 
 var dom = React.DOM;
 
 var Archive = React.createClass({
   displayName: 'Archive',
-  statics: {
-    fetchData: function (api, params) {
-      return api.queryPosts({
-        select: ['title', 'date', 'shorturl']
-      });
-    },
-    bodyClass: 'posts',
-    title: 'All Posts - James Long'
-  },
 
   render: function () {
-    let posts = this.props.data['archive'];
+    let posts = this.props.posts;
+    if(!posts) {
+      return null;
+    }
+
     return Page(
       null,
       dom.h1(null, 'All Posts'),
@@ -41,4 +39,20 @@ var Archive = React.createClass({
   }
 });
 
-module.exports = Archive;
+module.exports = connect(Archive, {
+  pageClass: 'posts',
+  title: 'All Posts - James Long',
+
+  runQueries: function (dispatch) {
+    dispatch(actions.queryPosts({
+      name: 'all',
+      select: ['title', 'date', 'shorturl']
+    }));
+  },
+
+  select: function(state, params) {
+    return {
+      posts: state.posts.getIn(['postsByQueryName', 'all'])
+    };
+  }
+});
